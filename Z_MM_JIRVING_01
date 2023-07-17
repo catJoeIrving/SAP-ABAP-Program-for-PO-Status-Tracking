@@ -44,17 +44,6 @@ FORM fetch_data.
       AND ( ekpo~erekz = @p_erekz OR ekpo~erekz = @v_erekz )
       AND ekko~ebeln IN @s_p_num.
 
-
-
-*  LOOP AT i_output INTO s_waoutput.
-*    clear v_total_delivered.
-*    LOOP AT i_ekbe INTO s_waekbe.
-*      IF s_waekbe-ebeln = s_waoutput-ebeln.
-*        v_total_delivered += s_waekbe-menge.
-*      ENDIF.
-*    ENDLOOP.
-*  ENDLOOP.
-
   IF sy-subrc = 0.
     LOOP AT i_output INTO s_waoutput. " This will loop through the records in the internal table and push that record into the work area
 
@@ -105,7 +94,7 @@ FORM fetch_data.
 
       " Adjusting row color for late orders that are still open
       IF sy-datum > s_waoutput-eindt AND s_waoutput-qopen > 0.
-        APPEND VALUE #( color-col = col_positive ) TO  s_waoutput-t_color.
+        APPEND VALUE #( color-col = 6 color-int = 1 ) TO  s_waoutput-t_color.
       ENDIF.
 
       MODIFY i_output FROM s_waoutput. " Must include modify at the end to commit changes made
