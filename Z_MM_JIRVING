@@ -68,17 +68,17 @@ TYPES: output_type TYPE STANDARD TABLE OF output_line,
 *----------------------------------------------------------------------*
 *Global Internal Table declarations                                    *
 *----------------------------------------------------------------------*
-DATA: i_output TYPE output_type,
+DATA: i_output     TYPE output_type,
       i_tempoutput TYPE output_type,
-      i_ekbe   TYPE ekbe_type,
-      i_wemng  TYPE wemng_type.
+      i_ekbe       TYPE ekbe_type,
+      i_wemng      TYPE wemng_type.
 
 *----------------------------------------------------------------------*
 *Global Work Areas                                                     *
 *----------------------------------------------------------------------*
-DATA: s_waoutput TYPE output_line,
+DATA: s_waoutput     TYPE output_line,
       s_watempoutput TYPE output_line,
-      s_waekbe   TYPE ekbe_line.
+      s_waekbe       TYPE ekbe_line.
 
 
 *----------------------------------------------------------------------*
@@ -176,11 +176,23 @@ AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_vari.
   PERFORM f_f4_variant.
 
 AT SELECTION-SCREEN.
+  IF p_elikz = abap_true.
+    v_elikz = abap_true.
+  ELSE.
+    v_elikz = abap_undefined.
+  ENDIF.
+
+  IF p_erekz = abap_true.
+    v_erekz = abap_true.
+  ELSE.
+    v_erekz = abap_undefined.
+  ENDIF.
   PERFORM f_check_variant.
 
 START-OF-SELECTION.
   PERFORM fetch_data.
   IF i_output[] IS INITIAL.
+    MESSAGE I001(zmy_messages).
     EXIT.
   ENDIF.
 
