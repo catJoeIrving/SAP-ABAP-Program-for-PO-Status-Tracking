@@ -1,0 +1,351 @@
+*&---------------------------------------------------------------------*
+*&  Include           Z_MM_JIRVING_01
+*&---------------------------------------------------------------------*
+
+*&---------------------------------------------------------------------*
+*&      Form  FETCH_DATA
+*&---------------------------------------------------------------------*
+
+FORM fetch_data.
+  SELECT ekko~ebeln,       " Purchase Order Number
+         ekpo~ebelp,       " PO Item Number
+                          " Dlv Status Icon
+                          " Invoice Status Icon
+         ekko~lifnr,       " Vendor
+         lfa1~name1,       " Vendor Name
+         ekko~ekgrp,       " Purchasing Group
+         ekko~bsart,       " Document Type
+         ekko~bedat,       " Document Date
+         ekpo~matnr,       " Material Number
+         ekpo~txz01,       " Short Text (Item Description)
+         ekpo~werks,       " Plant
+         ekpo~matkl,       " Material Group
+         eket~eindt,       " Requested Delivery Date
+         ekpo~menge,       " Quantity
+                          " Quantity Delivered - WEMNG field in EKET represents the delivered quantity
+                          " Quantity Still open - quantity still open would be MENGE (from EKPO) - WEMNG (from EKET).
+         ekpo~netpr,       " Net Price (Net value of the PO item)
+                          " Value Already Invoiced - RSEG table, the value already invoiced would be in the WRBTR field (Gross amount in document currency). You'd have to sum this up for all relevant invoice items.
+                          " Value still not Invoiced - The value not yet invoiced would then be NETPR * MENGE (from EKPO) - sum of WRBTR (from RSEG)
+         ekpo~elikz,       " Delivery Completed Indicator
+         ekpo~erekz,       " Final Invoice Indicator
+         ekko~ekorg       " Purchasing Organization
+    FROM ekko
+    INNER JOIN ekpo ON ekko~ebeln = ekpo~ebeln
+    INNER JOIN lfa1 ON ekko~lifnr = lfa1~lifnr
+    INNER JOIN eket ON ekko~ebeln = eket~ebeln AND ekpo~ebelp = eket~ebelp
+    INTO CORRESPONDING FIELDS OF TABLE @i_output
+    WHERE ekko~ekgrp IN @s_p_grp
+      AND ekko~ekorg IN @s_p_org
+      AND ekko~lifnr IN @s_vend
+      AND ekko~bsart IN @s_p_type
+      AND ekko~bedat IN @s_p_date
+      AND ( ekpo~elikz = @p_elikz OR ekpo~elikz = @v_elikz )
+      AND ( ekpo~erekz = @p_erekz OR ekpo~erekz = @v_erekz )
+      AND ekko~ebeln IN @s_p_num.
+
+
+
+*  LOOP AT i_output INTO s_waoutput.
+*    clear v_total_delivered.
+*    LOOP AT i_ekbe INTO s_waekbe.
+*      IF s_waekbe-ebeln = s_waoutput-ebeln.
+*        v_total_delivered += s_waekbe-menge.
+*      ENDIF.
+*    ENDLOOP.
+*  ENDLOOP.
+
+  IF sy-subrc = 0.
+    LOOP AT i_output INTO s_waoutput. " This will loop through the records in the internal table and push that record into the work area
+
+      " Setting the icons for delivery and final invoice status
+      IF s_waoutput-elikz = 'X'.
+        s_waoutput-dlv_status = icon_green_light.
+      ELSE.
+        s_waoutput-dlv_status = icon_yellow_light.
+      ENDIF.
+
+      IF s_waoutput-erekz = 'X'.
+        s_waoutput-inv_status = icon_green_light.
+      ELSE.
+        s_waoutput-inv_status = icon_yellow_light.
+      ENDIF.
+
+      " Getting quantity delivered
+      SELECT wemng
+        FROM eket
+        INTO v_temp_wemng
+       WHERE ebeln = s_waoutput-ebeln
+         AND ebelp = s_waoutput-ebelp.
+      ENDSELECT.
+
+      s_waoutput-wemng = v_temp_wemng.
+
+      " Calculating quantity still open
+      s_waoutput-qopen = s_waoutput-menge - s_waoutput-wemng.
+
+      REFRESH i_ekbe.
+
+      SELECT ebeln
+         ebelp
+         dmbtr
+      FROM ekbe
+      INTO TABLE i_ekbe
+      WHERE vgabe = '2'
+        AND ebeln = s_waoutput-ebeln
+        AND ebelp = s_waoutput-ebelp.
+
+      " Calculating value already invoiced
+      LOOP AT i_ekbe INTO s_waekbe.
+        s_waoutput-val_inv = s_waoutput-val_inv + s_waekbe-dmbtr.
+      ENDLOOP.
+
+      " Calculating value still not invoiced
+      s_waoutput-val_pend = s_waoutput-netpr * s_waoutput-menge - s_waoutput-val_inv.
+
+      " Adjusting row color for late orders that are still open
+      IF sy-datum > s_waoutput-eindt AND s_waoutput-qopen > 0.
+        APPEND VALUE #( color-col = col_positive ) TO  s_waoutput-t_color.
+      ENDIF.
+
+      MODIFY i_output FROM s_waoutput. " Must include modify at the end to commit changes made
+
+    ENDLOOP.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  F_F4_VARIANT
+*&---------------------------------------------------------------------*
+
+*Add ALV Layout Selection on screen
+FORM f_f4_variant .
+  DATA: lv_exit(1) TYPE c.
+
+  CLEAR gv_variant.
+
+  gv_variant-report = gv_repid.
+
+  CALL FUNCTION 'LVC_VARIANT_F4'
+    EXPORTING
+      is_variant    = gv_variant
+*     IT_DEFAULT_FIELDCAT =
+      i_save        = 'A'
+    IMPORTING
+      e_exit        = lv_exit
+      es_variant    = gv_variant
+    EXCEPTIONS
+      not_found     = 1
+      program_error = 2
+      OTHERS        = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE 'I' NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ELSE.
+    IF lv_exit NE 'X'.
+      p_vari = gv_variant-variant.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    " F_F4_VARIANT
+*&---------------------------------------------------------------------*
+*&      Form  F_CHECK_VARIANT
+*&---------------------------------------------------------------------*
+
+*Add ALV Layout Selection on screen
+FORM f_check_variant .
+* Variable holds variant structure
+  DATA: ls_varia    TYPE disvariant.
+
+* Validate variant on selection screen
+  IF NOT p_vari IS INITIAL.
+
+    ls_varia-report = gv_repid.
+    ls_varia-variant = p_vari.
+
+    CALL FUNCTION 'LVC_VARIANT_EXISTENCE_CHECK'
+      EXPORTING
+        i_save        = 'A'
+      CHANGING
+        cs_variant    = ls_varia
+      EXCEPTIONS
+        wrong_input   = 1
+        not_found     = 2
+        program_error = 3
+        OTHERS        = 4.
+    IF sy-subrc <> 0.
+      MESSAGE ID sy-msgid TYPE 'E' NUMBER sy-msgno
+          WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+
+  ENDIF.
+ENDFORM.                    " F_CHECK_VARIANT
+*&---------------------------------------------------------------------*
+*&      Form  F_SET_COLUMN_COMMON_DESC
+*&---------------------------------------------------------------------*
+FORM f_set_column_common_desc  USING    pr_columns TYPE REF TO cl_salv_columns_table
+                               CHANGING pr_column TYPE REF TO cl_salv_column.
+
+  DATA not_found TYPE REF TO cx_salv_not_found.
+
+  DEFINE zset_col_names.
+    TRY.
+      pr_column = pr_columns->get_column( &1 ).
+      pr_column->set_short_text( &2 ).
+      pr_column->set_medium_text( &3 ).
+      pr_column->set_long_text( &4 ).
+      CATCH cx_salv_not_found INTO not_found.
+    ENDTRY.
+  END-OF-DEFINITION.
+* Change column titles/description for display
+  zset_col_names 'DLV_STATUS' 'Dlv Stat' 'Dlv. Status' 'PO Delivery Status'.
+  zset_col_names 'INV_STATUS' 'Inv Stat' 'Inv. Status' 'PO Invoice Status'.
+
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_SET_COLUMN_HIDE
+*&---------------------------------------------------------------------*
+FORM f_set_column_hide  USING    pr_columns TYPE REF TO cl_salv_columns_table
+                        CHANGING pr_column  TYPE REF TO cl_salv_column.
+
+  DATA not_found TYPE REF TO cx_salv_not_found.
+
+  TRY.
+      pr_column ?= pr_columns->get_column( 'ELIKZ' ).
+      pr_column->set_visible( if_salv_c_bool_sap=>false ).
+    CATCH cx_salv_not_found INTO not_found.
+  ENDTRY.
+
+  TRY.
+      pr_column ?= pr_columns->get_column( 'EREKZ' ).
+      pr_column->set_visible( if_salv_c_bool_sap=>false ).
+    CATCH cx_salv_not_found INTO not_found.
+  ENDTRY.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  CREATE_HOTSPOT
+*&---------------------------------------------------------------------*
+FORM create_hotspot USING pr_columns TYPE REF TO cl_salv_columns_table
+                    CHANGING pr_column TYPE REF TO cl_salv_column_table.
+  DATA not_found TYPE REF TO cx_salv_not_found.
+
+
+  TRY.
+      pr_column ?= pr_columns->get_column( 'EBELN' ). "first get an instance of cl_salv_column_table type
+      CALL METHOD pr_column->set_cell_type                                   "then set cell type
+        EXPORTING
+          value = if_salv_c_cell_type=>hotspot.
+    CATCH cx_salv_not_found INTO not_found.
+  ENDTRY.
+  .
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  GO_TO_HOTSPOT
+*----------------------------------------------------------------------*
+FORM go_to_hotspot  USING i_row    TYPE i
+                        i_column TYPE lvc_fname.
+
+  READ TABLE i_output INDEX i_row INTO s_waoutput.
+
+  IF sy-subrc = 0.
+    IF i_column = 'EBELN'.
+      CHECK NOT s_waoutput-ebeln IS INITIAL.
+      SET PARAMETER ID 'BES' FIELD s_waoutput-ebeln.
+      CALL TRANSACTION 'ME23N' AND SKIP FIRST SCREEN.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  DISP_REPORT
+*&---------------------------------------------------------------------*
+FORM disp_report.
+  DATA: lr_events       TYPE REF TO cl_salv_events_table,
+        lr_column_table TYPE REF TO cl_salv_column_table, " columns instance
+        lr_columns      TYPE REF TO cl_salv_columns_table, " column instance
+        lr_column       TYPE REF TO cl_salv_column.
+*Set mode to full screen only
+  gv_list_display = if_salv_c_bool_sap=>false.
+* create ALV instance
+  TRY.
+      cl_salv_table=>factory(
+       EXPORTING
+         list_display   = gv_list_display
+*         R_CONTAINER    =
+*         CONTAINER_NAME =
+        IMPORTING
+          r_salv_table   = go_alv_table
+        CHANGING
+          t_table        = i_output ).
+    CATCH cx_salv_msg INTO go_alv_error.
+
+* Retrieve descriptive error text for exception
+      gv_error = go_alv_error->get_text( ).
+      MESSAGE gv_error TYPE 'I'.
+      TRY.
+          " Create icon rows
+          DATA(go_col) = CAST cl_salv_column_table( go_alv_table->get_columns( )->get_column( 'dlv_status' ) ).
+          go_col->set_icon( if_salv_c_bool_sap=>true ).
+          go_col->set_alignment( if_salv_c_alignment=>centered ).
+          go_col->set_long_text( 'Delivery Status' ).
+
+          DATA(go_col_2) = CAST cl_salv_column_table( go_alv_table->get_columns( )->get_column( 'inv_status' ) ).
+          go_col_2->set_icon( if_salv_c_bool_sap=>true ).
+          go_col_2->set_alignment( if_salv_c_alignment=>centered ).
+          go_col_2->set_long_text( 'Invoice Status' ).
+        CATCH cx_salv_not_found INTO go_alv_error.
+      ENDTRY.
+  ENDTRY.
+
+*  Add code for layout save
+  go_layout = go_alv_table->get_layout( ).
+  key-report = sy-repid.
+  go_layout->set_key( key ).
+  go_layout->set_save_restriction( if_salv_c_layout=>restrict_none ).
+  go_layout->set_default( abap_true ).
+
+* allow save layout feature
+  IF NOT p_vari IS INITIAL.
+    go_layout->set_initial_layout( p_vari ).
+  ENDIF.
+
+  TRY.
+*optimize the columns
+      lr_columns = go_alv_table->get_columns( ).
+      lr_columns->set_optimize( ).
+      " register the color column
+      lr_columns->set_color_column( 'T_COLOR' ).
+    CATCH cx_salv_data_error INTO go_alv_error.
+  ENDTRY.
+*change description
+  PERFORM f_set_column_common_desc USING lr_columns
+                                   CHANGING lr_column.
+*hide columns
+  PERFORM f_set_column_hide        USING lr_columns
+                                   CHANGING lr_column.
+  " create the hotspot for the PO number
+  PERFORM create_hotspot           USING lr_columns
+                                   CHANGING lr_column_table.
+
+  DATA : gr_events TYPE REF TO lcl_handle_events.
+
+  " Register events for hotspot click
+  lr_events = go_alv_table->get_event( ). " get event
+  CREATE OBJECT gr_events.
+  SET HANDLER gr_events->on_line_click FOR lr_events.
+
+  go_alv_table->set_screen_status(
+    pfstatus        = 'SALV_STANDARD'
+    report          = 'SALV_TEST_FUNCTIONS'
+    set_functions   = go_alv_table->c_functions_all ).
+
+* display ALV
+  go_alv_functions = go_alv_table->get_functions( ).
+  go_alv_functions->set_all( ).
+  go_alv_table->display( ).
+
+ENDFORM.
