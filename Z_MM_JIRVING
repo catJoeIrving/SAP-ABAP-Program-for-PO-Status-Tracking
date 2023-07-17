@@ -1,0 +1,193 @@
+REPORT z_mm_jirving MESSAGE-ID zb.
+
+*----------------------------------------------------------------------*
+* DB Table Declarations                                                *
+*----------------------------------------------------------------------*
+TABLES: ekko, ekpo, lfa1, eket, ekes.
+
+*********************************************************************
+* Global Declarations   -> Constants : C_????                          *
+*                       -> Variables : V_????                          *
+*                       -> Int Table : I_????                          *
+*                       -> Ranges    : R_????                          *
+*                       -> Work Areas: S_????                          *
+*********************************************************************
+
+
+*----------------------------------------------------------------------*
+* Global Constant declarations                                         *
+*----------------------------------------------------------------------*
+*CONSTANTS:
+
+*----------------------------------------------------------------------*
+*Global Type declarations                                              *
+*----------------------------------------------------------------------*
+* Line Types
+TYPES: BEGIN OF output_line,               " Line type
+         ebeln      LIKE ekko-ebeln,       " Purchase Order Number
+         ebelp      LIKE ekpo-ebelp,       " PO Item Number
+         dlv_status TYPE char30,           " Dlv Status Icon
+         inv_status TYPE char30,           " Invoice Status Icon
+         lifnr      LIKE ekko-lifnr,       " Vendor
+         name1      LIKE lfa1-name1,       " Vendor Name
+         ekgrp      LIKE ekko-ekgrp,       " Purchasing Group
+         bsart      LIKE ekko-bsart,       " Document Type
+         bedat      LIKE ekko-bedat,       " Document Date
+         matnr      LIKE ekpo-matnr,       " Material Number
+         txz01      LIKE ekpo-txz01,       " Short Text (Item Description)
+         werks      LIKE ekpo-werks,       " Plant
+         matkl      LIKE ekpo-matkl,       " Material Group
+         eindt      LIKE eket-eindt,       " Requested Delivery Date
+         menge      LIKE ekpo-menge,       " Quantity
+         wemng      LIKE eket-wemng,       " Quantity Delivered
+         qopen      LIKE eket-wemng,       " Quantity Still open
+         netpr      LIKE ekpo-netpr,       " Net Price (Net value of the PO item)
+         val_inv    TYPE ekbe-dmbtr,       " Value Already Invoiced
+         val_pend   TYPE ekbe-dmbtr,       " Value still not Invoiced
+         elikz      LIKE ekpo-elikz,       " Delivery Completed Indicator
+         erekz      LIKE ekpo-erekz,       " Final Invoice Indicator
+         ekorg      LIKE ekko-ekorg,       " Purchasing Organization
+         t_color    TYPE lvc_t_scol,       " Color Column
+       END OF output_line,
+
+       BEGIN OF ekbe_line,
+         ebeln LIKE ekbe-ebeln,
+         ebelp LIKE ekbe-ebelp,
+         dmbtr LIKE ekbe-dmbtr,
+       END OF ekbe_line,
+
+       BEGIN OF wemng_line,
+         wemng LIKE eket-wemng,
+       END OF wemng_line.
+
+* Table Types
+TYPES: output_type TYPE STANDARD TABLE OF output_line,
+       ekbe_type   TYPE STANDARD TABLE OF ekbe_line,
+       wemng_type  TYPE STANDARD TABLE OF wemng_line.
+
+*----------------------------------------------------------------------*
+*Global Internal Table declarations                                    *
+*----------------------------------------------------------------------*
+DATA: i_output TYPE output_type,
+      i_tempoutput TYPE output_type,
+      i_ekbe   TYPE ekbe_type,
+      i_wemng  TYPE wemng_type.
+
+*----------------------------------------------------------------------*
+*Global Work Areas                                                     *
+*----------------------------------------------------------------------*
+DATA: s_waoutput TYPE output_line,
+      s_watempoutput TYPE output_line,
+      s_waekbe   TYPE ekbe_line.
+
+
+*----------------------------------------------------------------------*
+*Global Working variables                                              *
+*----------------------------------------------------------------------*
+DATA: v_elikz           TYPE c LENGTH 1 VALUE 'X',
+      v_erekz           TYPE c LENGTH 1 VALUE 'X',
+      v_total_delivered TYPE ekbe-menge,
+      v_temp_wemng      TYPE eket-wemng.
+
+* Variable for Layout
+DATA:     go_layout TYPE REF TO cl_salv_layout.
+DATA:     key TYPE salv_s_layout_key.
+* Reference for ALV instance
+DATA:     go_alv_table TYPE REF TO cl_salv_table.
+* Reference for error situations
+DATA:     go_alv_error TYPE REF TO cx_salv_error.
+* Variable for exception error text
+DATA:     gv_error TYPE string.
+* Reference variables for ALV property classes
+DATA:     go_alv_functions TYPE REF TO cl_salv_functions_list.
+* Option for fullscreen or classic
+DATA:     gv_list_display TYPE sap_bool.
+* Define ALV variant variables
+DATA: gv_okcode  TYPE syucomm,
+      gv_variant TYPE disvariant,
+      gv_repid   TYPE sy-repid.
+
+*---------------------------------------------------------------------*
+*       CLASS lcl_handle_events DEFINITION
+*---------------------------------------------------------------------*
+
+CLASS lcl_handle_events DEFINITION.
+
+  PUBLIC SECTION.
+    METHODS:
+*     For Hotspot (PO Number)
+      on_line_click   FOR EVENT link_click   OF cl_salv_events_table
+        IMPORTING row column.
+
+ENDCLASS.
+
+*---------------------------------------------------------------------*
+*       CLASS lcl_handle_events IMPLEMENTATION
+*---------------------------------------------------------------------*
+CLASS lcl_handle_events IMPLEMENTATION.
+
+  METHOD on_line_click.
+    PERFORM go_to_hotspot USING row column.
+  ENDMETHOD.
+
+ENDCLASS.
+
+************************************************************************
+*SELECTION SCREEN    -> Parameters   : P_????                          *
+*                    -> Select-Option: S_????                          *
+*                    -> Radiobutton  : R_????                          *
+************************************************************************
+*SELECTION-SCREEN:
+SELECTION-SCREEN BEGIN OF BLOCK input1 WITH FRAME TITLE text-001.
+SELECT-OPTIONS: s_p_org FOR ekko-ekorg, " Purchasing Org
+                s_p_grp FOR ekko-ekgrp, " Purchasing Group
+                s_vend FOR ekko-lifnr,    " Vendor
+                s_p_type FOR ekko-bsart,  " PO Document type
+                s_p_date FOR ekko-bedat,  " PO Document date
+                s_p_num FOR ekko-ebeln. " PO Number
+
+SELECTION-SCREEN SKIP.
+
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN POSITION 1.
+PARAMETERS:     p_elikz AS CHECKBOX DEFAULT ''. " Delivery complete
+SELECTION-SCREEN COMMENT 3(30) text-t01.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN POSITION 1.
+PARAMETERS:     p_erekz AS CHECKBOX DEFAULT ''. " Final invoice
+SELECTION-SCREEN COMMENT 3(30) text-t02.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN SKIP.
+
+PARAMETERS: p_vari TYPE disvariant-variant MODIF ID d1. " ALV layout
+SELECTION-SCREEN END OF BLOCK input1.
+
+*----------------------------------------------------------------------*
+* Main Processing                                                      *
+*----------------------------------------------------------------------*
+
+INITIALIZATION.
+  gv_repid = sy-repid.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_vari.
+  PERFORM f_f4_variant.
+
+AT SELECTION-SCREEN.
+  PERFORM f_check_variant.
+
+START-OF-SELECTION.
+  PERFORM fetch_data.
+  IF i_output[] IS INITIAL.
+    EXIT.
+  ENDIF.
+
+END-OF-SELECTION.
+  PERFORM disp_report.
+
+*----------------------------------------------------------------------*
+* Program Includes                                                     *
+*----------------------------------------------------------------------*
+  INCLUDE z_mm_jirving_01.
